@@ -1,36 +1,31 @@
 """
-US Stocks vs US Bonds — Rendimenti annui 1871–oggi  (100% runtime, zero dati hardcoded)
-========================================================================================
+US Stocks vs US Bonds — genera DUE file HTML a runtime
+=======================================================
 
-Tutte le serie storiche vengono scaricate a runtime da tre fonti pubbliche e gratuite:
+HTML 1 — "runtime_gs10.html"
+    Stocks : ^GSPC price return (1927+)  sovrascritta da ^SP500TR total return (1988+)
+    Bonds  : FRED GS10 (10yr Treasury) + duration model 8.5yr
+    Parte da: 1919 (Moody's Aaa FRED come bond pre-1953)
 
-  1. Robert Shiller / Yale  (ie_data.xls)
-     URL: http://www.econ.yale.edu/~shiller/data/ie_data.xls
-     Copertura: 1871–oggi, mensile
-     Fornisce: prezzi S&P Composite + dividendi + GS10 yield
-     Uso: fonte base per 1910–1952 (bond) e 1910–1987 (stocks)
+HTML 2 — "runtime_ibbotson.html"   ← logica equivalente al JSX hardcoded
+    Stocks : Shiller total return composto (dividendi inclusi, 1872+)
+             sovrascritta da ^SP500TR total return (1988+)
+    Bonds  : Shiller GS10 yield + duration model 14yr (proxy LT Gov 20-30yr)
+             sovrascritta da FRED GS30 30yr Treasury + duration 14yr (1977+)
+    Parte da: 1910
 
-  2. FRED – Federal Reserve Bank of St. Louis  (GS10)
-     URL: https://fred.stlouisfed.org/graph/fredgraph.csv?id=GS10
-     Copertura: 1953–oggi, mensile
-     Uso: sovrascrive i bond yield di Shiller con dati ufficiali Fed (più precisi)
-
-  3. Yahoo Finance via yfinance  (^SP500TR, ^GSPC)
-     Copertura: ^SP500TR 1988–oggi  |  ^GSPC 1927–oggi
-     Uso: sovrascrive i rendimenti azionari con total return reali (dividendi inclusi)
-
-Metodo di calcolo bond total return (duration model):
-     ret_t ≈ yield_{t-1}  −  DURATION × (yield_t − yield_{t-1})
-     con DURATION = 8.5 (approssima un 10yr Treasury par bond)
+Fonti:
+    Shiller/Yale  : http://www.econ.yale.edu/~shiller/data/ie_data.xls
+    FRED GS10     : https://fred.stlouisfed.org/graph/fredgraph.csv?id=GS10
+    FRED GS30     : https://fred.stlouisfed.org/graph/fredgraph.csv?id=GS30
+    FRED Moody's  : https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAA
+    yfinance      : ^SP500TR (1988+), ^GSPC (1927+)
 
 Dipendenze:
-    pip install yfinance plotly pandas requests openpyxl numpy
-    pip install "xlrd==1.2.0"   # per leggere .xls (Shiller) su Python 3.9
-    pip install kaleido          # opzionale: export PNG/SVG
+    pip install yfinance plotly pandas requests "xlrd==1.2.0" openpyxl numpy
 """
 
-import io
-import warnings
+import base64, io, re, struct, warnings
 from datetime import date
 
 import numpy as np
@@ -41,53 +36,86 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ── costanti ────────────────────────────────────────────────────────────────
+# ── costanti ─────────────────────────────────────────────────────────────────
+TODAY         = date.today()
+DURATION_GS10 = 8.5    # duration modificata Treasury 10yr
+DURATION_LT   = 14.0   # duration modificata LT Gov Bond 20-30yr (stile Ibbotson)
 
-BOND_DURATION   = 8.5
-TODAY           = date.today()
-START_YEAR      = 1919   # 1919 = inizio serie Moody's FRED (bond fallback)
-
-SHILLER_URL     = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
-FRED_GS10_URL   = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GS10"
-# Moody's Aaa mensile dal 1919: proxy bond yield pre-1953
-# Serie per bond storici pre-1953: prova multipli ID FRED in ordine
-FRED_HISTORICAL_BOND_IDS = [
-    ("M1333AUSM193NNBR", "NBER Basic Yields LT Corp Bonds 1919+"),
-    ("IRLTLT01USM156N",   "OECD LT Gov Bond Yield USA 1960+"),
-    ("AAA",               "Moody Aaa Corporate 1983+"),
-]
+SHILLER_URL   = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
+FRED_GS10_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GS10"
+FRED_GS30_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GS30"
+FRED_AAA_URL  = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAA"
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  SORGENTE 1 — Shiller  (ie_data.xls)  — con diagnostica e fallback FRED Moody's
+#  FETCH — Shiller ie_data.xls  (lettura nativa xlrd, bypassa pd.read_excel)
 # ════════════════════════════════════════════════════════════════════════════
 
-def _compute_shiller_series(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    """Calcola stocks/bonds annuali dal DataFrame grezzo di Shiller."""
+def fetch_shiller() -> dict:
+    """
+    Legge ie_data.xls con l'API NATIVA di xlrd (bypassa il version-check di Pandas).
+    Restituisce un dict con:
+        'stocks_tr'  : rendimento annuo S&P Composite total return (%)
+        'bond_yield' : yield GS10 di fine anno (%), usato per duration model
+    """
+    print("  [Shiller] Scarico ie_data.xls ...")
+    resp = requests.get(SHILLER_URL, timeout=30)
+    resp.raise_for_status()
+
+    magic = resp.content[:4].hex()
+    is_xls = (magic == "d0cf11e0")
+    print(f"  [Shiller] Formato: {'XLS OLE2' if is_xls else 'altro (' + magic + ')'}  "
+          f"({len(resp.content):,} bytes)")
+
+    df = None
+
+    # --- Prova 1: xlrd native (bypassa pandas version check) ---
+    if is_xls:
+        try:
+            import xlrd as _xlrd
+            wb = _xlrd.open_workbook(file_contents=resp.content)
+            sheet_name = "Data" if "Data" in wb.sheet_names() else wb.sheet_names()[0]
+            ws = wb.sheet_by_name(sheet_name)
+            # Riga 7 (0-indexed) = intestazioni
+            headers = [str(ws.cell_value(7, c)).strip() for c in range(ws.ncols)]
+            rows    = [[ws.cell_value(r, c) for c in range(ws.ncols)]
+                       for r in range(8, ws.nrows)]
+            df = pd.DataFrame(rows, columns=headers)
+            print(f"  [Shiller] xlrd native OK — {len(df)} righe, colonne: {list(df.columns[:8])}")
+        except ImportError:
+            print("  [Shiller] xlrd non installato: python3 -m pip install \"xlrd==1.2.0\"")
+        except Exception as e:
+            print(f"  [Shiller] xlrd native fallito: {e}")
+
+    # --- Prova 2: openpyxl (se il file fosse in realtà xlsx) ---
+    if df is None:
+        try:
+            df = pd.read_excel(io.BytesIO(resp.content),
+                               sheet_name="Data", header=7, engine="openpyxl")
+            print(f"  [Shiller] openpyxl OK — {len(df)} righe")
+        except Exception as e:
+            print(f"  [Shiller] openpyxl fallito: {e}")
+
+    if df is None:
+        raise RuntimeError("Impossibile leggere ie_data.xls — vedi errori sopra.")
+
+    # ── normalizza colonne ────────────────────────────────────────────────────
     df.columns = [str(c).strip() for c in df.columns]
-
     col_map = {}
     for i, c in enumerate(df.columns):
         cl = c.lower().replace(" ", "").replace(".", "")
-        if i == 0 or cl in ("date", "date1"):
-            col_map[c] = "date_raw"
-        elif cl == "p":
-            col_map[c] = "price"
-        elif cl == "d":
-            col_map[c] = "dividend"
-        elif "rate" in cl or "gs10" in cl or "long" in cl:
-            col_map[c] = "gs10"
-
+        if i == 0 or cl in ("date", "date1"):       col_map[c] = "date_raw"
+        elif cl == "p":                               col_map[c] = "price"
+        elif cl == "d":                               col_map[c] = "dividend"
+        elif "rate" in cl or "gs10" in cl or "long" in cl: col_map[c] = "gs10"
     if "gs10" not in col_map.values() and len(df.columns) > 6:
         col_map[df.columns[6]] = "gs10"
-
     df = df.rename(columns=col_map)
+
     df = df[["date_raw", "price", "dividend", "gs10"]].copy()
     df = df[pd.to_numeric(df["date_raw"], errors="coerce").notna()].copy()
-    df["date_raw"] = df["date_raw"].astype(float)
-    df["price"]    = pd.to_numeric(df["price"],    errors="coerce")
-    df["dividend"] = pd.to_numeric(df["dividend"], errors="coerce")
-    df["gs10"]     = pd.to_numeric(df["gs10"],     errors="coerce")
+    for col in ("date_raw", "price", "dividend", "gs10"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["date_raw", "price"])
 
     df["year"]  = df["date_raw"].astype(int)
@@ -95,165 +123,80 @@ def _compute_shiller_series(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     df["month"] = df["month"].replace(0, 1)
     df = df.sort_values(["year", "month"]).reset_index(drop=True)
 
+    # ── total return mensile: (P_t + D_t/12) / P_{t-1} - 1 ──────────────────
     df["price_prev"]  = df["price"].shift(1)
     df["div_monthly"] = df["dividend"].fillna(0) / 12
     df["monthly_tr"]  = (df["price"] + df["div_monthly"]) / df["price_prev"] - 1
     df = df.dropna(subset=["monthly_tr"])
 
-    annual_stocks = (
+    # rendimento annuo: prodotto composto 12 mesi
+    annual_tr = (
         df.groupby("year")["monthly_tr"]
           .apply(lambda x: (np.prod(1 + x) - 1) * 100)
           .round(2)
     )
-    full_years    = df.groupby("year")["month"].count()
-    full_years    = full_years[full_years == 12].index
-    annual_stocks = annual_stocks[annual_stocks.index.isin(full_years)]
+    full_years = df.groupby("year")["month"].count()
+    full_years = full_years[full_years == 12].index
+    annual_tr  = annual_tr[annual_tr.index.isin(full_years)]
 
+    # yield GS10 di fine anno (per duration model bonds)
     dec_yield = df.groupby("year").apply(
         lambda g: g.loc[g["month"].idxmax(), "gs10"]
     ).dropna()
 
-    bond_returns = {}
-    years = sorted(dec_yield.index)
-    for i in range(1, len(years)):
-        y_prev, y_curr = dec_yield.iloc[i-1], dec_yield.iloc[i]
-        bond_returns[years[i]] = round(y_prev - BOND_DURATION * (y_curr - y_prev), 2)
+    print(f"  [Shiller] stocks TR: {int(annual_tr.index.min())}–{int(annual_tr.index.max())}"
+          f"  ({len(annual_tr)} anni)")
+    print(f"  [Shiller] GS10 yield: {int(dec_yield.index.min())}–{int(dec_yield.index.max())}"
+          f"  ({len(dec_yield)} anni)")
 
-    return annual_stocks, pd.Series(bond_returns, name="bonds_shiller")
-
-
-def fetch_shiller() -> tuple[pd.Series, pd.Series]:
-    """
-    Scarica ie_data.xls da Yale e lo legge con l'API NATIVA di xlrd 1.2.0,
-    bypassando completamente pd.read_excel (che rifiuta xlrd < 2.0.1).
-
-    xlrd.open_workbook() funziona direttamente con .xls OLE2 indipendentemente
-    dalla versione di Pandas installata.
-    """
-    print("  Scarico Shiller ie_data.xls da Yale ...")
-    resp = requests.get(SHILLER_URL, timeout=30)
-    resp.raise_for_status()
-
-    magic = resp.content[:4].hex()
-    fmt   = "XLS (OLE2)" if magic == "d0cf11e0" else "XLSX (ZIP)" if magic == "504b0304" else f"sconosciuto ({magic})"
-    print(f"  -> Formato rilevato: {fmt}  ({len(resp.content):,} bytes)")
-
-    # ── Prova 1: xlrd native API (bypassa il version check di Pandas) ────────
-    # pd.read_excel controlla che xlrd >= 2.0.1, ma xlrd 2.x non legge .xls OLE2.
-    # Chiamando xlrd direttamente non c'e' nessun controllo versione.
-    try:
-        import xlrd as _xlrd
-        wb = _xlrd.open_workbook(file_contents=resp.content)
-        # Cerca il foglio "Data" (o il primo foglio disponibile)
-        sheet_name = "Data" if "Data" in wb.sheet_names() else wb.sheet_names()[0]
-        ws = wb.sheet_by_name(sheet_name)
-        print(f"  -> xlrd native: foglio={sheet_name!r}, righe={ws.nrows}, colonne={ws.ncols}")
-
-        # Riga 7 (0-indexed) = intestazioni, righe 8+ = dati
-        HEADER_ROW = 7
-        headers = [str(ws.cell_value(HEADER_ROW, c)).strip() for c in range(ws.ncols)]
-        rows = [
-            [ws.cell_value(r, c) for c in range(ws.ncols)]
-            for r in range(HEADER_ROW + 1, ws.nrows)
-        ]
-        df = pd.DataFrame(rows, columns=headers)
-        print(f"  -> DataFrame grezzo: {len(df)} righe x {len(df.columns)} colonne")
-        return _compute_shiller_series(df)
-
-    except ImportError:
-        print("  [!] xlrd non installato. Esegui: python3 -m pip install \"xlrd==1.2.0\"")
-    except Exception as e:
-        print(f"  [!] xlrd native fallito: {type(e).__name__}: {e}")
-
-    # ── Prova 2: openpyxl (funziona se il file è in realtà un xlsx rinominato) ─
-    try:
-        raw = io.BytesIO(resp.content)
-        df = pd.read_excel(raw, sheet_name="Data", header=7, engine="openpyxl")
-        print("  -> OK con openpyxl")
-        return _compute_shiller_series(df)
-    except Exception as e:
-        print(f"  [!] openpyxl fallito: {type(e).__name__}: {e}")
-
-    raise RuntimeError(
-        "Impossibile leggere ie_data.xls.\n"
-        "  Installa xlrd 1.2.0: python3 -m pip install \"xlrd==1.2.0\""
-    )
+    return {"stocks_tr": annual_tr, "bond_yield": dec_yield}
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  SORGENTE 2 — FRED GS10  (sostituisce bond Shiller dal 1953 in poi)
+#  FETCH — FRED (yield mensile → total return via duration model)
 # ════════════════════════════════════════════════════════════════════════════
 
-def fetch_bonds_fred() -> pd.Series:
-    """GS10 Treasury 10yr da FRED (mensile dal 1953) → total return annuo."""
-    print("  Scarico FRED GS10 ...")
-    return _fred_yield_to_annual_bond_returns(FRED_GS10_URL, "bonds_gs10")
-
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  SORGENTE 2b — FRED Moody's Aaa  (bond 1919–1952, fallback se Shiller fallisce)
-# ════════════════════════════════════════════════════════════════════════════
-
-def _fred_yield_to_annual_bond_returns(url: str, label: str) -> pd.Series:
-    """
-    Scarica un yield mensile da FRED e lo converte in rendimento annuo
-    via duration model. Funzione generica usata sia per GS10 che per Moody's Aaa.
-    """
+def _fred_yield_series(url: str, label: str) -> pd.Series:
+    """Scarica un yield mensile da FRED, ritorna Series con index=anno, value=yield fine anno."""
     resp = requests.get(url, timeout=20)
     resp.raise_for_status()
     text = resp.text.lstrip("\ufeff")
-    raw_df = pd.read_csv(io.StringIO(text))
-    raw_df.columns = ["date_str", "yield_pct"]
-    raw_df = raw_df[raw_df["yield_pct"] != "."].copy()
-    raw_df["yield_pct"] = pd.to_numeric(raw_df["yield_pct"], errors="coerce")
-    raw_df["date"]      = pd.to_datetime(raw_df["date_str"], errors="coerce")
-    raw_df = raw_df.dropna(subset=["date", "yield_pct"])
-    raw_df = raw_df.set_index("date").sort_index()
-
+    raw  = pd.read_csv(io.StringIO(text))
+    raw.columns = ["date_str", "yield_pct"]
+    raw = raw[raw["yield_pct"] != "."].copy()
+    raw["yield_pct"] = pd.to_numeric(raw["yield_pct"], errors="coerce")
+    raw["date"]      = pd.to_datetime(raw["date_str"], errors="coerce")
+    raw = raw.dropna(subset=["date", "yield_pct"]).set_index("date").sort_index()
     try:
-        annual_yield = raw_df["yield_pct"].resample("YE").last()
+        annual = raw["yield_pct"].resample("YE").last()
     except Exception:
-        annual_yield = raw_df["yield_pct"].resample("A").last()
-    annual_yield.index = annual_yield.index.year
-    annual_yield = annual_yield.dropna()
+        annual = raw["yield_pct"].resample("A").last()
+    annual.index = annual.index.year
+    annual = annual.dropna()
+    print(f"  [FRED {label}] {int(annual.index.min())}–{int(annual.index.max())}"
+          f"  ({len(annual)} anni)")
+    return annual
 
-    bond_returns = {}
-    years = sorted(annual_yield.index)
+
+def yield_to_bond_returns(yield_series: pd.Series, duration: float) -> pd.Series:
+    """Converte una serie di yield annuali in total return via duration model."""
+    years   = sorted(yield_series.index)
+    returns = {}
     for i in range(1, len(years)):
-        y_prev, y_curr = annual_yield.iloc[i-1], annual_yield.iloc[i]
-        bond_returns[years[i]] = round(y_prev - BOND_DURATION * (y_curr - y_prev), 2)
-
-    series = pd.Series(bond_returns, name=label)
-    print(f"  -> {label}: {int(series.index.min())}–{int(series.index.max())}"
-          f"  ({len(series)} anni)")
-    return series
-
-
-def fetch_bonds_aaa_historical() -> pd.Series:
-    """
-    Scarica yield obbligazionario storico pre-1953 da FRED.
-    Prova una lista di series ID in ordine fino a trovarne uno valido.
-    """
-    print("  Scarico FRED bond storici pre-1953 ...")
-    for series_id, label in FRED_HISTORICAL_BOND_IDS:
-        url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-        try:
-            result = _fred_yield_to_annual_bond_returns(url, f"bonds_hist({series_id})")
-            if len(result) > 5:
-                print(f"  -> Usata serie {series_id}: {label}")
-                return result
-        except Exception as e:
-            print(f"  -> {series_id} non disponibile: {e}")
-    raise RuntimeError("Nessuna serie FRED storica disponibile per i bond pre-1953.")
+        y_prev = yield_series.iloc[i - 1]
+        y_curr = yield_series.iloc[i]
+        returns[years[i]] = round(y_prev - duration * (y_curr - y_prev), 2)
+    return pd.Series(returns)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  SORGENTE 3 — yfinance  (sostituisce stock Shiller dal 1927 in poi)
+#  FETCH — yfinance
 # ════════════════════════════════════════════════════════════════════════════
 
-def _annual_returns(series: pd.Series) -> pd.Series:
-    series = series.dropna()
+def _annual_returns_from_prices(series: pd.Series) -> pd.Series:
+    series = series.squeeze().dropna()
+    if isinstance(series, pd.DataFrame):
+        series = series.iloc[:, 0]
     try:
         annual = series.resample("YE").last()
     except Exception:
@@ -262,142 +205,146 @@ def _annual_returns(series: pd.Series) -> pd.Series:
     return (annual.pct_change() * 100).dropna().round(2)
 
 
-def fetch_stocks_yfinance() -> pd.Series:
-    """
-    Scarica ^SP500TR (total return 1988+) e ^GSPC (price return 1927+) da Yahoo.
-    Combina i due: dove esiste il total return ha priorità.
-    """
-    end_str = str(TODAY)
+def fetch_yfinance() -> dict:
+    """Scarica ^SP500TR (total return 1988+) e ^GSPC (price return 1927+)."""
+    end = str(TODAY)
 
-    print("  Scarico ^SP500TR (total return, 1988–oggi) ...")
-    raw_tr = yf.download("^SP500TR", start="1988-01-01", end=end_str,
+    print("  [yfinance] Scarico ^SP500TR ...")
+    raw_tr = yf.download("^SP500TR", start="1988-01-01", end=end,
                          auto_adjust=True, progress=False)
-    # yfinance restituisce MultiIndex su columns → squeeze a Series 1D
-    if isinstance(raw_tr.columns, pd.MultiIndex):
-        spxtr = raw_tr["Close"].squeeze()
-    else:
-        spxtr = raw_tr["Close"] if "Close" in raw_tr.columns else raw_tr.iloc[:, 0]
-    spxtr = spxtr.squeeze()
+    col_tr = raw_tr["Close"] if not isinstance(raw_tr.columns, pd.MultiIndex) \
+             else raw_tr["Close"].squeeze()
+    ret_tr = _annual_returns_from_prices(col_tr)
 
-    print("  Scarico ^GSPC (price return, 1927–oggi) ...")
-    raw_pr = yf.download("^GSPC", start="1927-01-01", end=end_str,
+    print("  [yfinance] Scarico ^GSPC ...")
+    raw_pr = yf.download("^GSPC", start="1927-01-01", end=end,
                          auto_adjust=True, progress=False)
-    if isinstance(raw_pr.columns, pd.MultiIndex):
-        gspc = raw_pr["Close"].squeeze()
-    else:
-        gspc = raw_pr["Close"] if "Close" in raw_pr.columns else raw_pr.iloc[:, 0]
-    gspc = gspc.squeeze()
+    col_pr = raw_pr["Close"] if not isinstance(raw_pr.columns, pd.MultiIndex) \
+             else raw_pr["Close"].squeeze()
+    ret_pr = _annual_returns_from_prices(col_pr)
 
-    ret_spxtr = _annual_returns(spxtr)
-    ret_gspc  = _annual_returns(gspc)
+    # combina: price return come base, total return sovrascrive dal 1988
+    combined = ret_pr.copy()
+    combined.update(ret_tr)
 
-    combined = ret_gspc.copy()
-    combined.update(ret_spxtr)   # total return sovrascrive price return
-
-    print(f"  -> yfinance stocks: {int(combined.index.min())}–{int(combined.index.max())}"
-          f"  ({len(combined)} anni)")
-    return combined
+    print(f"  [yfinance] stocks combinati: {int(combined.index.min())}–{int(combined.index.max())}")
+    return {"stocks_price_then_tr": combined, "stocks_tr_only": ret_tr}
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  ASSEMBLY — merge delle tre sorgenti con ordine di priorità
+#  BUILD DATASETS
 # ════════════════════════════════════════════════════════════════════════════
 
-def build_dataset() -> pd.DataFrame:
+def build_datasets() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Costruisce il DataFrame finale fondendo le tre sorgenti.
+    Ritorna (df_gs10, df_ibbotson).
 
-    Priorità per STOCKS:
-        Shiller  <  yfinance ^GSPC (1927+)  <  yfinance ^SP500TR (1988+)
-
-    Priorità per BONDS:
-        Shiller  <  FRED GS10 duration model (1953+)
+    df_gs10      : metodologia "runtime" — GSPC price→TR + GS10 duration 8.5
+    df_ibbotson  : metodologia "Ibbotson" — Shiller TR + LT bond duration 14
     """
-    print("\n=== FETCH DATI RUNTIME ===")
+    print("\n" + "="*60)
+    print("  FETCH DATI RUNTIME")
+    print("="*60)
 
-    # ── Shiller (opzionale: estende la copertura storica) ────────────────────
+    # ── Shiller ──────────────────────────────────────────────────────────────
+    shiller = None
     try:
-        stocks_shiller, bonds_shiller = fetch_shiller()
+        shiller = fetch_shiller()
     except Exception as e:
         print(f"  [AVVISO] Shiller non disponibile: {e}")
-        print("  Uso FRED Moody's Aaa come fallback per bond pre-1953.")
-        stocks_shiller = pd.Series(dtype=float)
-        bonds_shiller  = pd.Series(dtype=float)
 
-    # ── FRED GS10 (bond 1954+) ────────────────────────────────────────────────
+    # ── FRED GS10 ─────────────────────────────────────────────────────────────
+    gs10_yield = None
     try:
-        bonds_fred = fetch_bonds_fred()
+        print("  [FRED] Scarico GS10 ...")
+        gs10_yield = _fred_yield_series(FRED_GS10_URL, "GS10")
     except Exception as e:
-        print(f"  [ERRORE] FRED GS10 non disponibile: {e}")
-        bonds_fred = pd.Series(dtype=float)
+        print(f"  [ERRORE] FRED GS10: {e}")
 
-    # ── FRED Moody's Aaa (bond 1919–1952, fallback se Shiller manca) ─────────
+    # ── FRED GS30 (per metodologia Ibbotson) ─────────────────────────────────
+    gs30_yield = None
     try:
-        bonds_aaa = fetch_bonds_aaa_historical()
+        print("  [FRED] Scarico GS30 ...")
+        gs30_yield = _fred_yield_series(FRED_GS30_URL, "GS30")
     except Exception as e:
-        print(f"  [ERRORE] FRED Moody's Aaa non disponibile: {e}")
-        bonds_aaa = pd.Series(dtype=float)
+        print(f"  [ERRORE] FRED GS30: {e}")
 
-    # ── yfinance (stocks 1928+) ───────────────────────────────────────────────
+    # ── FRED Moody's AAA (fallback bond pre-1953 per df_gs10) ─────────────────
+    aaa_yield = None
     try:
-        stocks_yf = fetch_stocks_yfinance()
+        print("  [FRED] Scarico Moody's AAA ...")
+        aaa_yield = _fred_yield_series(FRED_AAA_URL, "AAA")
     except Exception as e:
-        print(f"  [ERRORE] yfinance non disponibile: {e}")
-        stocks_yf = pd.Series(dtype=float)
+        print(f"  [ERRORE] FRED AAA: {e}")
 
-    # ── Diagnostica copertura ─────────────────────────────────────────────────
-    print("\n  --- Copertura per fonte ---")
-    def _rng(s):
-        s = s.dropna()
-        return f"{int(s.index.min())}–{int(s.index.max())}  ({len(s)} anni)" if len(s) else "VUOTA"
-    print(f"  stocks_shiller : {_rng(stocks_shiller)}")
-    print(f"  stocks_yf      : {_rng(stocks_yf)}")
-    print(f"  bonds_shiller  : {_rng(bonds_shiller)}")
-    print(f"  bonds_aaa_hist : {_rng(bonds_aaa)}")
-    print(f"  bonds_gs10     : {_rng(bonds_fred)}")
+    # ── yfinance ──────────────────────────────────────────────────────────────
+    yf_data = None
+    try:
+        yf_data = fetch_yfinance()
+    except Exception as e:
+        print(f"  [ERRORE] yfinance: {e}")
 
-    # ── Merge con ordine di priorità ──────────────────────────────────────────
-    # Bonds: Moody's Aaa (1919+) < Shiller GS10 < FRED GS10 (1954+)
-    # Stocks: Shiller Composite < yfinance GSPC (1928+) < yfinance SP500TR (1988+)
-    all_years = list(range(START_YEAR, TODAY.year + 1))
+    # ════════════════════════════════════════════════════════════════════════
+    #  DATASET 1 — GS10  (metodologia "runtime", come l'HTML corrente)
+    #  Stocks : GSPC price return → SP500TR total return 1988+
+    #  Bonds  : Moody's AAA (base pre-1953) → GS10 duration 8.5 (1954+)
+    # ════════════════════════════════════════════════════════════════════════
+    all_years_1 = list(range(1919, TODAY.year + 1))
 
-    stocks_merged = stocks_shiller.reindex(all_years)
-    stocks_merged.update(stocks_yf)
+    # bonds
+    b1 = pd.Series(dtype=float)
+    if aaa_yield is not None:
+        b1_base = yield_to_bond_returns(aaa_yield, DURATION_GS10)
+        b1 = b1_base.reindex(all_years_1)
+    if gs10_yield is not None:
+        b1_gs10 = yield_to_bond_returns(gs10_yield, DURATION_GS10)
+        b1.update(b1_gs10)
 
-    bonds_merged = bonds_aaa.reindex(all_years)   # base: Moody's Aaa 1919+
-    bonds_merged.update(bonds_shiller)             # sovrascrive con Shiller GS10
-    bonds_merged.update(bonds_fred)                # sovrascrive con FRED GS10 (1954+)
+    # stocks
+    s1 = pd.Series(dtype=float)
+    if yf_data is not None:
+        s1 = yf_data["stocks_price_then_tr"].reindex(all_years_1)
 
-    # ── Debug: quanti anni hanno entrambi i valori? ──────────────────────────
-    tmp = pd.DataFrame({"stocks": stocks_merged, "bonds": bonds_merged})
-    n_stocks_ok = tmp["stocks"].notna().sum()
-    n_bonds_ok  = tmp["bonds"].notna().sum()
-    n_both_ok   = tmp.dropna().shape[0]
-    print(f"\n  --- Anni con dato valido ---")
-    print(f"  stocks: {n_stocks_ok}  |  bonds: {n_bonds_ok}  |  entrambi: {n_both_ok}")
-    if n_stocks_ok != n_bonds_ok:
-        miss_s = tmp[tmp["stocks"].isna() & tmp["bonds"].notna()].index.tolist()
-        miss_b = tmp[tmp["bonds"].isna()  & tmp["stocks"].notna()].index.tolist()
-        if miss_s:
-            print(f"  Anni con solo bonds (stocks mancante): {miss_s}")
-        if miss_b:
-            print(f"  Anni con solo stocks (bonds mancante): {miss_b}")
+    df1 = pd.DataFrame({"year": all_years_1,
+                         "stocks": s1.values,
+                         "bonds":  b1.values}).dropna()
+    df1["year"] = df1["year"].astype(int)
+    df1["is_partial"] = df1["year"] == TODAY.year
 
-    df = tmp.dropna().reset_index()
-    df.columns = ["year", "stocks", "bonds"]
+    # ════════════════════════════════════════════════════════════════════════
+    #  DATASET 2 — Ibbotson  (metodologia equivalente al JSX)
+    #  Stocks : Shiller TR composto (1872+) → SP500TR 1988+
+    #  Bonds  : Shiller GS10 yield duration 14 → GS30 duration 14 (1977+)
+    # ════════════════════════════════════════════════════════════════════════
+    all_years_2 = list(range(1910, TODAY.year + 1))
 
-    df["year"]       = df["year"].astype(int)
-    df["decade"]     = (df["year"] // 10 * 10).astype(str) + "s"
-    df["label"]      = df["year"].astype(str).str[-2:]
-    df["is_partial"] = df["year"] == TODAY.year
+    # stocks
+    s2 = pd.Series(dtype=float, index=all_years_2)
+    if shiller is not None:
+        s2.update(shiller["stocks_tr"].reindex(all_years_2))
+    if yf_data is not None:
+        s2.update(yf_data["stocks_tr_only"])   # SP500TR sovrascrive dal 1988
 
-    print(f"\n  DATASET FINALE: {len(df)} anni  ({df.year.min()}–{df.year.max()})")
-    if df["is_partial"].any():
-        ytd = df[df["is_partial"]].iloc[0]
-        print(f"  Anno parziale {TODAY.year} YTD ({TODAY}): "
-              f"Stocks {ytd.stocks:+.1f}%  |  Bonds {ytd.bonds:+.1f}%")
+    # bonds: yield di base da Shiller, poi aggiornato con GS30 dal 1977
+    yield_base = pd.Series(dtype=float)
+    if shiller is not None:
+        yield_base = shiller["bond_yield"]
+    if gs30_yield is not None:
+        yield_base = yield_base.copy()
+        yield_base.update(gs30_yield)
 
-    return df
+    b2 = yield_to_bond_returns(yield_base, DURATION_LT).reindex(all_years_2)
+
+    df2 = pd.DataFrame({"year": all_years_2,
+                         "stocks": s2.values,
+                         "bonds":  b2.values}).dropna()
+    df2["year"] = df2["year"].astype(int)
+    df2["is_partial"] = df2["year"] == TODAY.year
+
+    print(f"\n  Dataset GS10      : {len(df1)} anni  ({df1.year.min()}–{df1.year.max()})")
+    print(f"  Dataset Ibbotson  : {len(df2)} anni  ({df2.year.min()}–{df2.year.max()})")
+
+    return df1, df2
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -405,8 +352,7 @@ def build_dataset() -> pd.DataFrame:
 # ════════════════════════════════════════════════════════════════════════════
 
 DECADE_COLORS = {
-    "1870s": "#aaaaaa", "1880s": "#cccccc", "1890s": "#999999",
-    "1900s": "#dddddd",
+    "1870s": "#888888", "1880s": "#aaaaaa", "1890s": "#bbbbbb", "1900s": "#cccccc",
     "1910s": "#ff9ff3",
     "1920s": "#f4d03f",
     "1930s": "#e74c3c",
@@ -422,25 +368,25 @@ DECADE_COLORS = {
 }
 
 NOTABLE = {
-    1915: ("WW1 rally",     ( -30, -28)),
-    1929: ("'29 Crash",     (  30,  28)),
-    1931: ("'31 Crisi",     (  30,  28)),
-    1933: ("'33 New Deal",  ( -30, -28)),
-    1945: ("Fine WW2",      (  30, -28)),
-    1974: ("Oil crisis",    (  30,  28)),
-    1982: ("Volcker pivot", ( -30, -28)),
-    2008: ("GFC",           ( -30,  28)),
-    2022: ("Stagflazione",  ( -30,  28)),
+    1929: ("'29 Crash",     ( 30,  28)),
+    1931: ("'31 Crisi",     ( 30,  28)),
+    1933: ("'33 New Deal",  (-30, -28)),
+    1945: ("Fine WW2",      ( 30, -28)),
+    1974: ("Oil crisis",    ( 30,  28)),
+    1982: ("Volcker pivot", (-30, -28)),
+    2008: ("GFC",           (-30,  28)),
+    2022: ("Stagflazione",  (-30,  28)),
 }
 
 
-def build_figure(df: pd.DataFrame) -> go.Figure:
+def build_figure(df: pd.DataFrame, title: str, subtitle: str, source_note: str) -> go.Figure:
     fig = go.Figure()
 
-    x_min = max(-55, df.stocks.min() - 5)
-    x_max = min(95,  df.stocks.max() + 5)
-    y_min = max(-30, df.bonds.min() - 5)
-    y_max = min(55,  df.bonds.max() + 5)
+    stocks_range = [min(-55, df.stocks.min() - 5), max(90, df.stocks.max() + 5)]
+    bonds_range  = [min(-30, df.bonds.min()  - 5), max(50, df.bonds.max()  + 5)]
+
+    df["decade"] = (df["year"] // 10 * 10).astype(str) + "s"
+    df["label"]  = df["year"].astype(str).str[-2:]
 
     for decade, group in df.groupby("decade", sort=True):
         color = DECADE_COLORS.get(decade, "#888888")
@@ -456,46 +402,33 @@ def build_figure(df: pd.DataFrame) -> go.Figure:
                 f"Bonds:  <b>{bc}</b>"
             )
 
-        line_colors = [
-            "#ffffff" if row.is_partial else "#0d1117"
-            for row in group.itertuples()
-        ]
-        line_widths = [
-            2.2 if row.is_partial else 0.8
-            for row in group.itertuples()
-        ]
+        line_colors = ["#ffffff" if r.is_partial else "#0d1117" for r in group.itertuples()]
+        line_widths = [2.2      if r.is_partial else 0.8       for r in group.itertuples()]
 
         fig.add_trace(go.Scatter(
-            x=group["stocks"],
-            y=group["bonds"],
+            x=group["stocks"], y=group["bonds"],
             mode="markers+text",
             name=decade,
             text=group["label"].tolist(),
             textposition="middle center",
             textfont=dict(family="'Courier New', monospace", size=7, color="#0d1117"),
-            hovertext=hover_texts,
-            hoverinfo="text",
-            marker=dict(
-                color=color, size=18, opacity=0.87,
-                line=dict(color=line_colors, width=line_widths),
-            ),
+            hovertext=hover_texts, hoverinfo="text",
+            marker=dict(color=color, size=18, opacity=0.87,
+                        line=dict(color=line_colors, width=line_widths)),
             legendgroup=decade,
         ))
 
     fig.add_vline(x=0, line=dict(color="#444c56", dash="dot", width=1))
     fig.add_hline(y=0, line=dict(color="#444c56", dash="dot", width=1))
-    fig.add_shape(
-        type="line",
-        x0=min(x_min, y_min), y0=min(x_min, y_min),
-        x1=max(x_max, y_max), y1=max(x_max, y_max),
-        line=dict(color="#c9b037", dash="dash", width=1),
-        opacity=0.28,
-    )
-    fig.add_annotation(
-        x=25, y=28, text="stocks = bonds", showarrow=False,
-        font=dict(color="#c9b037", size=9, family="monospace"),
-        opacity=0.45, textangle=-20,
-    )
+
+    diag_min = min(stocks_range[0], bonds_range[0])
+    diag_max = max(stocks_range[1], bonds_range[1])
+    fig.add_shape(type="line",
+                  x0=diag_min, y0=diag_min, x1=diag_max, y1=diag_max,
+                  line=dict(color="#c9b037", dash="dash", width=1), opacity=0.28)
+    fig.add_annotation(x=25, y=28, text="stocks = bonds", showarrow=False,
+                       font=dict(color="#c9b037", size=9, family="monospace"),
+                       opacity=0.45, textangle=-20)
 
     for year, (label, (ax, ay)) in NOTABLE.items():
         rows = df[df["year"] == year]
@@ -507,8 +440,7 @@ def build_figure(df: pd.DataFrame) -> go.Figure:
             arrowhead=2, arrowsize=0.8, arrowcolor="#8b949e", arrowwidth=1,
             ax=ax, ay=ay,
             font=dict(family="monospace", size=9, color="#c9d1d9"),
-            bgcolor="#0d1117", bordercolor="#30363d",
-            borderwidth=1, borderpad=3, opacity=0.9,
+            bgcolor="#0d1117", bordercolor="#30363d", borderwidth=1, borderpad=3, opacity=0.9,
         )
 
     avg_s = df.stocks.mean()
@@ -518,9 +450,8 @@ def build_figure(df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         title=dict(
             text=(
-                f"<b>US Stocks vs US Bonds</b>  —  Rendimenti annui "
-                f"{df.year.min()}–{df.year.max()}<br>"
-                f"<sup>X = S&P 500 total return  |  Y = Bond 10yr (duration model)  |  "
+                f"<b>{title}</b>  —  {df.year.min()}–{df.year.max()}<br>"
+                f"<sup>{subtitle}  |  "
                 f"Media stocks {avg_s:+.1f}%  |  Media bonds {avg_b:+.1f}%  |  "
                 f"Anni entrambi negativi: {n_neg}</sup>"
             ),
@@ -530,46 +461,33 @@ def build_figure(df: pd.DataFrame) -> go.Figure:
         xaxis=dict(
             title=dict(text="Stock Return (%)",
                        font=dict(family="monospace", size=12, color="#8b949e")),
-            range=[x_min, x_max], zeroline=False,
-            gridcolor="#21262d",
-            tickfont=dict(family="monospace", size=10, color="#8b949e"),
-            ticksuffix="%",
+            range=stocks_range, zeroline=False, gridcolor="#21262d",
+            tickfont=dict(family="monospace", size=10, color="#8b949e"), ticksuffix="%",
         ),
         yaxis=dict(
             title=dict(text="Bond Return (%)",
                        font=dict(family="monospace", size=12, color="#8b949e")),
-            range=[y_min, y_max], zeroline=False,
-            gridcolor="#21262d",
-            tickfont=dict(family="monospace", size=10, color="#8b949e"),
-            ticksuffix="%",
+            range=bonds_range, zeroline=False, gridcolor="#21262d",
+            tickfont=dict(family="monospace", size=10, color="#8b949e"), ticksuffix="%",
         ),
-        plot_bgcolor="#161b22",
-        paper_bgcolor="#0d1117",
+        plot_bgcolor="#161b22", paper_bgcolor="#0d1117",
         legend=dict(
             title=dict(text="Decade", font=dict(color="#8b949e", size=11)),
             font=dict(family="monospace", size=11, color="#e6edf3"),
             bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
             itemclick="toggle", itemdoubleclick="toggleothers",
         ),
-        hoverlabel=dict(
-            bgcolor="#0d1117", bordercolor="#30363d",
-            font=dict(family="monospace", size=12, color="#e6edf3"),
-        ),
+        hoverlabel=dict(bgcolor="#0d1117", bordercolor="#30363d",
+                        font=dict(family="monospace", size=12, color="#e6edf3")),
         width=1200, height=720,
-        margin=dict(t=110, b=70, l=70, r=40),
+        margin=dict(t=110, b=80, l=70, r=40),
     )
 
     fig.add_annotation(
-        xref="paper", yref="paper", x=0, y=-0.09,
-        text=(
-            "Fonti: Shiller/Yale ie_data.xls (base storica 1871+)  ·  "
-            "FRED GS10 duration model 8.5yr (sovrascrive bond 1953+)  ·  "
-            "yfinance ^SP500TR / ^GSPC (sovrascrive stocks 1927+)  ·  "
-            f"Generato il {TODAY}"
-        ),
+        xref="paper", yref="paper", x=0, y=-0.10,
+        text=f"{source_note}  ·  Generato il {TODAY}",
         showarrow=False,
-        font=dict(size=9, color="#484f58", family="monospace"),
-        align="left",
+        font=dict(size=9, color="#484f58", family="monospace"), align="left",
     )
 
     return fig
@@ -579,32 +497,48 @@ def build_figure(df: pd.DataFrame) -> go.Figure:
 #  MAIN
 # ════════════════════════════════════════════════════════════════════════════
 
-def main():
-    df = build_dataset()
-
-    print("\n=== STATISTICHE ===")
-    print(f"{'Anni totali:':<32} {len(df)}")
-    print(f"{'Media Stocks:':<32} {df.stocks.mean():+.2f}%")
-    print(f"{'Media Bonds:':<32} {df.bonds.mean():+.2f}%")
+def print_stats(df: pd.DataFrame, label: str):
+    print(f"\n  [{label}]")
+    print(f"    Anni: {len(df)}  ({df.year.min()}–{df.year.max()})")
+    print(f"    Media stocks: {df.stocks.mean():+.2f}%  |  Media bonds: {df.bonds.mean():+.2f}%")
     best  = df.loc[df.stocks.idxmax()]
     worst = df.loc[df.stocks.idxmin()]
-    print(f"{'Miglior anno Stocks:':<32} {int(best.year)} ({best.stocks:+.1f}%)")
-    print(f"{'Peggior anno Stocks:':<32} {int(worst.year)} ({worst.stocks:+.1f}%)")
+    print(f"    Miglior anno stocks: {int(best.year)} ({best.stocks:+.1f}%)")
+    print(f"    Peggior anno stocks: {int(worst.year)} ({worst.stocks:+.1f}%)")
     neg = df[(df.stocks < 0) & (df.bonds < 0)]
-    print(f"{'Anni entrambi negativi:':<32} {len(neg)}")
-    print(f"  -> {', '.join(neg.year.astype(str).tolist())}")
-    print("=" * 45)
+    print(f"    Anni entrambi negativi: {len(neg)} — {list(neg.year.astype(int))}")
 
-    fig = build_figure(df)
 
-    fig.show()
+def main():
+    df_gs10, df_ibbotson = build_datasets()
 
-    out = "us_bonds_vs_stocks.html"
-    fig.write_html(out, include_plotlyjs="cdn")
-    print(f"\nSalvato: {out}")
+    print("\n" + "="*60)
+    print("  STATISTICHE")
+    print("="*60)
+    print_stats(df_gs10,     "GS10 / GSPC price→TR")
+    print_stats(df_ibbotson, "Ibbotson / Shiller TR + LT Bond dur.14")
 
-    # PNG ad alta risoluzione (richiede: pip install kaleido)
-    # fig.write_image("us_bonds_vs_stocks.png", scale=2)
+    # ── HTML 1: GS10 metodologia ──────────────────────────────────────────────
+    fig1 = build_figure(
+        df_gs10,
+        title    = "US Stocks vs US Bonds",
+        subtitle = "X = S&P 500 (price→TR dal 1988)  |  Y = Bond 10yr GS10 duration 8.5",
+        source_note = "Stocks: yfinance ^GSPC / ^SP500TR  ·  Bonds: FRED GS10 + Moody's AAA duration 8.5yr",
+    )
+    out1 = "runtime_gs10.html"
+    fig1.write_html(out1, include_plotlyjs="cdn")
+    print(f"\n  Salvato: {out1}")
+
+    # ── HTML 2: Ibbotson metodologia ──────────────────────────────────────────
+    fig2 = build_figure(
+        df_ibbotson,
+        title    = "US Stocks vs US Bonds  [Metodologia Ibbotson]",
+        subtitle = "X = S&P 500 total return (Shiller + SP500TR)  |  Y = LT Gov Bond GS30 duration 14",
+        source_note = "Stocks: Shiller ie_data.xls TR composto / ^SP500TR  ·  Bonds: Shiller GS10 + FRED GS30 duration 14yr",
+    )
+    out2 = "runtime_ibbotson.html"
+    fig2.write_html(out2, include_plotlyjs="cdn")
+    print(f"  Salvato: {out2}")
 
 
 if __name__ == "__main__":
