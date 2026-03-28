@@ -1,129 +1,138 @@
-# US Stocks vs US Bonds — Annual Returns
+# Azioni USA vs Obbligazioni USA — Rendimenti Annuali
 
-Interactive scatter-plot visualizations of **US stock returns vs US bond returns**, year by year, spanning over a century of financial history (1910 -- present).
+Visualizzazioni interattive a scatter-plot dei **rendimenti annuali delle azioni USA vs obbligazioni USA**, anno per anno, su oltre un secolo di storia finanziaria (1910 -- oggi).
 
-Each dot on the chart represents a single calendar year. The **X axis** shows the annual stock return (S&P 500) and the **Y axis** shows the annual bond return (US government bonds). Dots are color-coded by decade, and a dashed diagonal line marks the `stocks = bonds` boundary: points above the line are years where bonds outperformed stocks, points below are years where stocks won.
+Ogni punto del grafico rappresenta un singolo anno solare. L'**asse X** mostra il rendimento annuale delle azioni (S&P 500) e l'**asse Y** mostra il rendimento annuale delle obbligazioni (titoli di Stato USA). I punti sono colorati per decennio e una linea diagonale tratteggiata segna il confine `azioni = obbligazioni`: i punti sopra la linea sono anni in cui le obbligazioni hanno sovraperformato le azioni, i punti sotto sono anni in cui le azioni hanno vinto.
 
-The repository contains three separate implementations of this visualization, built with two different methodologies and two different technologies.
-
----
-
-## Output files
-
-### `runtime_gs10.html` — Methodology "GS10"
-
-Generated at runtime by `us_bonds_vs_stocks.py`. All data is downloaded live from public APIs.
-
-| Asset class | Source | Coverage |
-|---|---|---|
-| **Stocks** | Yahoo Finance `^GSPC` (S&P 500 price return), overwritten by `^SP500TR` (S&P 500 total return including dividends) where available | 1928 -- present |
-| **Bonds** | FRED Moody's AAA corporate yield as base, overwritten by FRED GS10 (10-Year US Treasury Constant Maturity yield) from 1954 onward. Yield is converted to total return using a **duration model with modified duration = 8.5 years**, which approximates a 10-year Treasury par bond | 1919 -- present |
-
-This methodology focuses on the **10-year Treasury** as the bond benchmark. The shorter duration (8.5) means bond returns are less volatile -- capital gains and losses from rate changes are more moderate compared to the Ibbotson methodology below.
-
-### `runtime_ibbotson.html` — Methodology "Ibbotson"
-
-Generated at runtime by `us_bonds_vs_stocks.py`. All data is downloaded live from public APIs.
-
-| Asset class | Source | Coverage |
-|---|---|---|
-| **Stocks** | Shiller/Yale `ie_data.xls` S&P Composite total return (monthly price + dividends, compounded annually), overwritten by Yahoo Finance `^SP500TR` from 1988 onward | 1910 -- present |
-| **Bonds** | Shiller/Yale GS10 yield as base, overwritten by FRED GS30 (30-Year US Treasury yield) from 1977 onward. Yield is converted to total return using a **duration model with modified duration = 14 years**, which approximates a long-term 20-30 year government bond (matching the Ibbotson SBBI convention) | 1910 -- present |
-
-This methodology mirrors the classic **Ibbotson SBBI (Stocks, Bonds, Bills, and Inflation)** dataset published by Morningstar. The longer duration (14) produces more volatile bond returns -- large capital gains when rates fall, large losses when rates rise. This is the same convention used in most academic finance textbooks.
-
-### `us-bonds-vs-stocks.jsx` — React Component (Static Data)
-
-A standalone React component using [Recharts](https://recharts.org/) with **hardcoded data** from Ibbotson SBBI / Morningstar and Cowles Commission estimates (1910--2024). No runtime data fetching.
-
-Features:
-- Interactive hover with custom tooltip showing year, stock return, and bond return
-- Decade filter buttons to show/hide individual decades
-- Live statistics strip (mean returns, best/worst year, years where both asset classes lost money)
-- Dark theme, responsive layout
-
-Data notes for the JSX:
-- **1910--1925**: estimates from Cowles Commission / NBER, not official Ibbotson data
-- **1926--2024**: Ibbotson SBBI / Morningstar official data
-- Stocks = S&P 500 total return (dividends reinvested)
-- Bonds = Long-term US Government bonds total return
+Il repository contiene tre implementazioni separate di questa visualizzazione, costruite con due metodologie e due tecnologie diverse.
 
 ---
 
-## How the bond duration model works
+## Anteprima interattiva
 
-Since bond yield data is widely available but bond *total return* data is not (especially for historical periods), this project approximates bond total returns from yields using the standard **duration model**:
+| Grafico | Link |
+|---|---|
+| **GS10** — Treasury 10 anni, duration 8.5 | [Apri runtime_gs10.html](https://mattia1337.github.io/US-Bond-vs-Stock-USA/runtime_gs10.html) |
+| **Ibbotson** — Bond lungo termine, duration 14 | [Apri runtime_ibbotson.html](https://mattia1337.github.io/US-Bond-vs-Stock-USA/runtime_ibbotson.html) |
+
+---
+
+## File di output
+
+### `runtime_gs10.html` — Metodologia "GS10"
+
+Generato a runtime da `us_bonds_vs_stocks.py`. Tutti i dati vengono scaricati in tempo reale da API pubbliche.
+
+| Classe di attività | Fonte | Copertura |
+|---|---|---|
+| **Azioni** | Yahoo Finance `^GSPC` (rendimento prezzo S&P 500), sovrascritto da `^SP500TR` (rendimento totale S&P 500 con dividendi reinvestiti) dove disponibile | 1928 -- oggi |
+| **Obbligazioni** | FRED Moody's AAA (rendimento obbligazioni corporate) come base, sovrascritto da FRED GS10 (rendimento Treasury USA a 10 anni, Constant Maturity) dal 1954 in poi. Il rendimento viene convertito in rendimento totale tramite un **modello di duration con duration modificata = 8.5 anni**, che approssima un Treasury a 10 anni alla pari | 1919 -- oggi |
+
+Questa metodologia utilizza il **Treasury a 10 anni** come benchmark obbligazionario. La duration più breve (8.5) comporta rendimenti obbligazionari meno volatili: le variazioni in conto capitale dovute ai movimenti dei tassi sono più contenute rispetto alla metodologia Ibbotson sotto.
+
+### `runtime_ibbotson.html` — Metodologia "Ibbotson"
+
+Generato a runtime da `us_bonds_vs_stocks.py`. Tutti i dati vengono scaricati in tempo reale da API pubbliche.
+
+| Classe di attività | Fonte | Copertura |
+|---|---|---|
+| **Azioni** | Shiller/Yale `ie_data.xls` rendimento totale S&P Composite (prezzo mensile + dividendi, capitalizzati annualmente), sovrascritto da Yahoo Finance `^SP500TR` dal 1988 in poi | 1910 -- oggi |
+| **Obbligazioni** | Shiller/Yale GS10 come base, sovrascritto da FRED GS30 (rendimento Treasury USA a 30 anni) dal 1977 in poi. Il rendimento viene convertito in rendimento totale tramite un **modello di duration con duration modificata = 14 anni**, che approssima un titolo di Stato a lungo termine 20-30 anni (in linea con la convenzione Ibbotson SBBI) | 1910 -- oggi |
+
+Questa metodologia rispecchia il classico dataset **Ibbotson SBBI (Stocks, Bonds, Bills, and Inflation)** pubblicato da Morningstar. La duration più lunga (14) produce rendimenti obbligazionari più volatili: forti plusvalenze quando i tassi scendono, forti perdite quando salgono. È la stessa convenzione utilizzata nella maggior parte dei libri di testo di finanza accademica.
+
+### `us-bonds-vs-stocks.jsx` — Componente React (Dati Statici)
+
+Componente React standalone che utilizza [Recharts](https://recharts.org/) con **dati hardcoded** da Ibbotson SBBI / Morningstar e stime della Cowles Commission (1910--2024). Nessun download di dati a runtime.
+
+Funzionalità:
+- Hover interattivo con tooltip personalizzato che mostra anno, rendimento azionario e rendimento obbligazionario
+- Pulsanti filtro per decennio per mostrare/nascondere singoli decenni
+- Striscia di statistiche in tempo reale (rendimenti medi, miglior/peggior anno, anni in cui entrambe le classi di attività sono state negative)
+- Tema scuro, layout responsive
+
+Note sui dati del JSX:
+- **1910--1925**: stime della Cowles Commission / NBER, non dati ufficiali Ibbotson
+- **1926--2024**: dati ufficiali Ibbotson SBBI / Morningstar
+- Azioni = rendimento totale S&P 500 (dividendi reinvestiti)
+- Obbligazioni = rendimento totale dei titoli di Stato USA a lungo termine
+
+---
+
+## Come funziona il modello di duration obbligazionaria
+
+Poiché i dati sui rendimenti (yield) delle obbligazioni sono ampiamente disponibili, ma i dati sul *rendimento totale* non lo sono (soprattutto per i periodi storici), questo progetto approssima i rendimenti totali obbligazionari a partire dai rendimenti usando il **modello di duration** standard:
 
 ```
-return(t) = yield(t-1) - duration × (yield(t) - yield(t-1))
+rendimento(t) = yield(t-1) - duration × (yield(t) - yield(t-1))
 ```
 
-Where:
-- `yield(t-1)` is the bond yield at the end of the previous year (the "coupon" income earned)
-- `duration × (yield(t) - yield(t-1))` is the approximate capital gain or loss from the change in interest rates
-- `duration` is the modified duration of the bond (8.5 for a 10-year Treasury, 14 for a 20-30 year long-term government bond)
+Dove:
+- `yield(t-1)` è il rendimento dell'obbligazione alla fine dell'anno precedente (il reddito da "cedola" incassato)
+- `duration × (yield(t) - yield(t-1))` è la plusvalenza o minusvalenza approssimata dovuta alla variazione dei tassi di interesse
+- `duration` è la duration modificata dell'obbligazione (8.5 per un Treasury a 10 anni, 14 per un titolo di Stato a lungo termine 20-30 anni)
 
-When rates **fall**, bondholders earn the coupon *plus* a capital gain. When rates **rise**, the capital loss partially or fully offsets the coupon income.
+Quando i tassi **scendono**, gli obbligazionisti incassano la cedola *più* una plusvalenza. Quando i tassi **salgono**, la minusvalenza compensa parzialmente o totalmente il reddito da cedola.
 
 ---
 
-## How to use
+## Come usare
 
-### Python script (`us_bonds_vs_stocks.py`)
+### Script Python (`us_bonds_vs_stocks.py`)
 
-**Requirements**: Python 3.9+
+**Requisiti**: Python 3.9+
 
-1. Install dependencies:
+1. Installare le dipendenze:
 
 ```bash
 pip install yfinance plotly pandas requests "xlrd==1.2.0" openpyxl numpy
 ```
 
-2. Run the script:
+2. Eseguire lo script:
 
 ```bash
 python us_bonds_vs_stocks.py
 ```
 
-3. The script will:
-   - Download all data at runtime from Shiller/Yale, FRED, and Yahoo Finance
-   - Print diagnostic output showing coverage and statistics for each data source
-   - Generate two HTML files in the current directory: `runtime_gs10.html` and `runtime_ibbotson.html`
+3. Lo script:
+   - Scaricherà tutti i dati a runtime da Shiller/Yale, FRED e Yahoo Finance
+   - Stamperà output diagnostico con copertura e statistiche per ogni fonte dati
+   - Genererà due file HTML nella directory corrente: `runtime_gs10.html` e `runtime_ibbotson.html`
 
-4. Open the HTML files in any browser. The charts are fully interactive (powered by [Plotly](https://plotly.com/)) -- hover over any dot to see the year and exact returns, click legend entries to toggle decades on/off.
+4. Aprire i file HTML in un qualsiasi browser. I grafici sono interattivi (basati su [Plotly](https://plotly.com/)): passare il mouse su un punto per vedere l'anno e i rendimenti esatti, cliccare sulle voci della legenda per attivare/disattivare i decenni.
 
-### React component (`us-bonds-vs-stocks.jsx`)
+### Componente React (`us-bonds-vs-stocks.jsx`)
 
-The JSX file is a self-contained React component designed to be dropped into any React project that uses Recharts:
+Il file JSX è un componente React autonomo progettato per essere inserito in qualsiasi progetto React che utilizza Recharts:
 
 ```bash
 npm install recharts
 ```
 
-Then import and render the component:
+Poi importare e renderizzare il componente:
 
 ```jsx
 import App from "./us-bonds-vs-stocks";
 
-// Render <App /> in your React app
+// Renderizzare <App /> nella propria app React
 ```
 
-No data fetching is needed -- the dataset is embedded directly in the file.
+Non è necessario alcun download di dati: il dataset è incorporato direttamente nel file.
 
 ---
 
-## Data sources
+## Fonti dati
 
-| Source | URL | What it provides |
+| Fonte | URL | Cosa fornisce |
 |---|---|---|
-| **Robert Shiller / Yale** | http://www.econ.yale.edu/~shiller/data/ie_data.xls | S&P Composite monthly prices, dividends, and GS10 yield (1871--present) |
-| **FRED GS10** | https://fred.stlouisfed.org/series/GS10 | 10-Year Treasury Constant Maturity Rate, monthly (1953--present) |
-| **FRED GS30** | https://fred.stlouisfed.org/series/GS30 | 30-Year Treasury Constant Maturity Rate, monthly (1977--present) |
-| **FRED AAA** | https://fred.stlouisfed.org/series/AAA | Moody's Seasoned Aaa Corporate Bond Yield, monthly (1919--present) |
-| **Yahoo Finance** | `^SP500TR` / `^GSPC` via [yfinance](https://github.com/ranaroussi/yfinance) | S&P 500 Total Return Index (1988--present) and S&P 500 Price Index (1927--present) |
+| **Robert Shiller / Yale** | http://www.econ.yale.edu/~shiller/data/ie_data.xls | Prezzi mensili S&P Composite, dividendi e rendimento GS10 (1871--oggi) |
+| **FRED GS10** | https://fred.stlouisfed.org/series/GS10 | Tasso Treasury a 10 anni Constant Maturity, mensile (1953--oggi) |
+| **FRED GS30** | https://fred.stlouisfed.org/series/GS30 | Tasso Treasury a 30 anni Constant Maturity, mensile (1977--oggi) |
+| **FRED AAA** | https://fred.stlouisfed.org/series/AAA | Rendimento Moody's Seasoned Aaa Corporate Bond, mensile (1919--oggi) |
+| **Yahoo Finance** | `^SP500TR` / `^GSPC` tramite [yfinance](https://github.com/ranaroussi/yfinance) | Indice S&P 500 Total Return (1988--oggi) e Indice S&P 500 Price (1927--oggi) |
 
 ---
 
-## License
+## Licenza
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+Questo progetto è distribuito sotto la [GNU General Public License v3.0](LICENSE).
