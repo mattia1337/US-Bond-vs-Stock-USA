@@ -4,7 +4,7 @@ Visualizzazioni interattive a scatter-plot dei **rendimenti annuali delle azioni
 
 Ogni punto del grafico rappresenta un singolo anno solare. L'**asse X** mostra il rendimento annuale delle azioni (S&P 500) e l'**asse Y** mostra il rendimento annuale delle obbligazioni (titoli di Stato USA). I punti sono colorati per decennio e una linea diagonale tratteggiata segna il confine `azioni = obbligazioni`: i punti sopra la linea sono anni in cui le obbligazioni hanno sovraperformato le azioni, i punti sotto sono anni in cui le azioni hanno vinto.
 
-Il repository contiene tre implementazioni separate di questa visualizzazione, costruite con due metodologie e due tecnologie diverse.
+Il repository contiene due implementazioni di questa visualizzazione, costruite con due metodologie e due tecnologie diverse.
 
 ---
 
@@ -85,7 +85,7 @@ Quando i tassi **scendono**, gli obbligazionisti incassano la cedola *più* una 
 1. Installare le dipendenze:
 
 ```bash
-pip install yfinance plotly pandas requests "xlrd==1.2.0" openpyxl numpy
+pip install -r requirements.txt
 ```
 
 2. Eseguire lo script:
