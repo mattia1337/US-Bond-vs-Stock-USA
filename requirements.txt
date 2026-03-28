@@ -1,0 +1,7 @@
+yfinance
+plotly
+pandas
+requests
+xlrd==1.2.0
+openpyxl
+numpy
