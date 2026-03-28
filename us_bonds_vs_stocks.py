@@ -479,7 +479,7 @@ def build_figure(df: pd.DataFrame, title: str, subtitle: str, source_note: str) 
         ),
         hoverlabel=dict(bgcolor="#0d1117", bordercolor="#30363d",
                         font=dict(family="monospace", size=12, color="#e6edf3")),
-        width=1200, height=720,
+        autosize=True,
         margin=dict(t=110, b=80, l=70, r=40),
     )
 
@@ -491,6 +491,25 @@ def build_figure(df: pd.DataFrame, title: str, subtitle: str, source_note: str) 
     )
 
     return fig
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  FULLSCREEN HTML
+# ════════════════════════════════════════════════════════════════════════════
+
+_FULLSCREEN_HEAD = (
+    '<head><meta charset="utf-8" />'
+    '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+    '<style>'
+    'html,body{margin:0;padding:0;height:100%;width:100%;overflow:hidden}'
+    '.plotly-graph-div{width:100vw!important;height:100vh!important}'
+    '</style></head>'
+)
+
+def _inject_fullscreen_css(path: str):
+    html = open(path, encoding="utf-8").read()
+    html = html.replace('<head><meta charset="utf-8" /></head>', _FULLSCREEN_HEAD)
+    open(path, "w", encoding="utf-8").write(html)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -527,6 +546,7 @@ def main():
     )
     out1 = "runtime_gs10.html"
     fig1.write_html(out1, include_plotlyjs="cdn")
+    _inject_fullscreen_css(out1)
     print(f"\n  Salvato: {out1}")
 
     # ── HTML 2: Ibbotson metodologia ──────────────────────────────────────────
@@ -538,6 +558,7 @@ def main():
     )
     out2 = "runtime_ibbotson.html"
     fig2.write_html(out2, include_plotlyjs="cdn")
+    _inject_fullscreen_css(out2)
     print(f"  Salvato: {out2}")
 
 
