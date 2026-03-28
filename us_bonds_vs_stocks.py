@@ -331,6 +331,9 @@ def build_datasets() -> tuple[pd.DataFrame, pd.DataFrame]:
         yield_base = shiller["bond_yield"]
     if gs30_yield is not None:
         yield_base = yield_base.copy()
+        # update sovrascrive ma non aggiunge chiavi nuove → concat prima
+        new_keys = gs30_yield[~gs30_yield.index.isin(yield_base.index)]
+        yield_base = pd.concat([yield_base, new_keys])
         yield_base.update(gs30_yield)
 
     b2 = yield_to_bond_returns(yield_base, DURATION_LT).reindex(all_years_2)

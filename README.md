@@ -14,6 +14,7 @@ Il repository contiene due implementazioni di questa visualizzazione, costruite 
 |---|---|
 | **GS10** — Treasury 10 anni, duration 8.5 | [Apri runtime_gs10.html](https://mattia1337.github.io/US-Bond-vs-Stock-USA/runtime_gs10.html) |
 | **Ibbotson** — Bond lungo termine, duration 14 | [Apri runtime_ibbotson.html](https://mattia1337.github.io/US-Bond-vs-Stock-USA/runtime_ibbotson.html) |
+| **Analisi ML** — Pattern e cicli nei rendimenti | [Apri analysis.html](https://mattia1337.github.io/US-Bond-vs-Stock-USA/analysis.html) |
 
 ---
 
@@ -56,6 +57,30 @@ Note sui dati del JSX:
 - **1926--2024**: dati ufficiali Ibbotson SBBI / Morningstar
 - Azioni = rendimento totale S&P 500 (dividendi reinvestiti)
 - Obbligazioni = rendimento totale dei titoli di Stato USA a lungo termine
+
+### `analysis.html` — Analisi ML e Pattern
+
+Generato da `us_bonds_vs_stocks_analysis.py`. Pagina interattiva con 6 analisi statistiche e di machine learning sul dataset Ibbotson (1910--oggi), pensata per essere comprensibile anche da chi non ha un background finanziario.
+
+Ogni sezione include una spiegazione introduttiva, un grafico interattivo e una conclusione con i risultati chiave.
+
+Le 6 analisi:
+
+1. **Regimi di Mercato (GMM)** — Un algoritmo di machine learning (Gaussian Mixture Model) identifica automaticamente 4 "stati" ricorrenti del mercato: *Goldilocks* (entrambi positivi), *Fuga verso la qualità* (azioni giù, bond su — gli investitori scappano dal rischio e comprano titoli di Stato), *Boom con tassi in salita* (azioni su, bond giù), *Stagflazione/Crisi* (entrambi negativi). Le zone sfumate mostrano la dispersione di ogni regime.
+
+2. **Matrice di Transizione Markov** — Dato il quadrante di quest'anno, qual è la probabilità di finire in ciascun quadrante l'anno prossimo? Le crisi raramente si ripetono due anni di fila.
+
+3. **Correlazione Rolling Azioni-Bond** — Una finestra mobile di 10 anni mostra come cambia nel tempo la relazione tra azioni e obbligazioni. L'area verde indica periodi in cui la diversificazione funziona (bond proteggono dai crolli azionari), l'area rossa indica periodi in cui non funziona (entrambi scendono insieme). Il cambio storico intorno al 2000 e il ritorno della correlazione positiva nel 2022 sono i risultati più importanti.
+
+4. **CAPE come Predittore** — Il rapporto P/E ciclico di Robert Shiller (premio Nobel) confrontato con i rendimenti reali dei 10 anni successivi. Poiché serve aspettare 10 anni per conoscere il rendimento effettivo, gli anni recenti (dopo il ~2015) non hanno ancora un risultato verificabile: i diamanti arancioni li mostrano posizionati sulla previsione storica. I punti sono colorati per decade e cliccabili singolarmente nella legenda.
+
+5. **Mean Reversion** — Dopo un anno di crollo (azioni sotto -10%), cosa succede l'anno dopo? I box plot mostrano che storicamente il rendimento mediano successivo è sopra la media, ma con alta dispersione. Include una previsione per l'anno in corso basata su come ha chiuso l'anno precedente e i precedenti storici comparabili.
+
+6. **Autocorrelazione e Cicli** — I rendimenti passati predicono quelli futuri? I grafici mostrano che per le azioni la risposta è quasi sempre no (mercati efficienti), mentre per le obbligazioni c'è una lieve persistenza legata ai trend pluriennali dei tassi d'interesse.
+
+```bash
+python us_bonds_vs_stocks_analysis.py
+```
 
 ---
 
