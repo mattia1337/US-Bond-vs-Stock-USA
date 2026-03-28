@@ -5,3 +5,5 @@ requests
 xlrd==1.2.0
 openpyxl
 numpy
+scikit-learn
+scipy
