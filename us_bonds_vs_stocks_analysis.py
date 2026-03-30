@@ -699,7 +699,7 @@ def analysis_mean_reversion(df_full: pd.DataFrame) -> tuple[go.Figure, dict]:
 #  ANALISI 6 — Autocorrelazione e Cicli
 # ════════════════════════════════════════════════════════════════════════════
 
-def analysis_autocorrelation(df: pd.DataFrame) -> go.Figure:
+def analysis_autocorrelation(df: pd.DataFrame) -> tuple:
     df = df.sort_values("year").copy()
     max_lag = 15
     n = len(df)
@@ -713,6 +713,8 @@ def analysis_autocorrelation(df: pd.DataFrame) -> go.Figure:
         ],
         vertical_spacing=0.15, horizontal_spacing=0.1,
     )
+
+    acf_info = {}
 
     for col_idx, (series_name, series_label) in enumerate([("stocks", "Azioni"), ("bonds", "Bond")]):
         vals = df[series_name].values
@@ -729,6 +731,11 @@ def analysis_autocorrelation(df: pd.DataFrame) -> go.Figure:
 
         lags = list(range(1, max_lag + 1))
         bar_colors = ["#f85149" if abs(v) > conf else "#58a6ff" for v in acf_vals]
+
+        acf_info[series_label] = {
+            "significant": [(lg, val) for lg, val in zip(lags, acf_vals) if abs(val) > conf],
+            "conf": conf,
+        }
 
         fig.add_trace(go.Bar(
             x=lags, y=acf_vals, marker_color=bar_colors,
@@ -797,7 +804,7 @@ def analysis_autocorrelation(df: pd.DataFrame) -> go.Figure:
     for ann in fig.layout.annotations:
         ann.font = dict(family=FONT_TEXT, size=15, color=TEXT_COL)
 
-    return fig
+    return fig, acf_info
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -932,17 +939,7 @@ SECTION_TEXT = {
             "se il mercato avesse un ciclo regolare (es. \"ogni 15 anni c'è un crollo\"), "
             "vedremmo un picco in corrispondenza di quel periodo."
         ),
-        "takeaway": (
-            "Per le <b>azioni</b>, quasi nessuna barra supera la soglia rossa: "
-            "il rendimento dell'anno scorso <b>non</b> predice quello di quest'anno. "
-            "Questo è coerente con l'ipotesi dei mercati efficienti: "
-            "i prezzi incorporano già tutte le informazioni disponibili.<br><br>"
-            "Per le <b>obbligazioni</b>, la barra a Lag 1 (= anno precedente) "
-            "è leggermente positiva: se i bond sono saliti l'anno scorso, "
-            "tendono a salire anche quest'anno. Perché? I tassi d'interesse "
-            "si muovono in trend pluriennali (le banche centrali alzano o abbassano "
-            "i tassi gradualmente, non a caso), e i rendimenti dei bond ne seguono la direzione."
-        ),
+        "takeaway": "",  # verrà aggiornato dinamicamente nel main con i dati ACF reali
     },
 }
 
@@ -1143,7 +1140,50 @@ def main():
         SECTION_TEXT[5]["takeaway"] = base_takeaway
 
     print("  Analisi 6: Autocorrelazione e Cicli ...")
-    fig6 = analysis_autocorrelation(df)
+    fig6, acf_info = analysis_autocorrelation(df)
+
+    # aggiorna il takeaway della sezione 6 con i dati ACF reali
+    def _describe_acf(label, info):
+        sig = info["significant"]
+        if not sig:
+            return (
+                f"Per le <b>{label.lower()}</b>, nessuna barra supera la soglia rossa: "
+                f"i rendimenti passati non predicono quelli futuri. "
+                f"Coerente con l'ipotesi dei mercati efficienti."
+            )
+        lag_strs = [f"Lag {lg} ({val:+.3f})" for lg, val in sig]
+        neg = [v for _, v in sig if v < 0]
+        pos = [v for _, v in sig if v > 0]
+        text = (
+            f"Per le <b>{label.lower()}</b>, i lag significativi sono: "
+            f"{', '.join(lag_strs)}. "
+        )
+        if neg and not pos:
+            text += (
+                "Sono tutti negativi, il che suggerisce una tendenza alla "
+                "<b>mean reversion</b>: dopo un anno forte, c'è una lieve "
+                "tendenza ribassista a distanza di qualche anno."
+            )
+        elif pos and not neg:
+            lags_txt = ", ".join(str(lg) for lg, _ in sig)
+            text += (
+                f"Sono tutti positivi, il che indica <b>memoria/persistenza</b> "
+                f"a {lags_txt} anni: i rendimenti tendono a mantenere la direzione. "
+            )
+            if label == "Bond":
+                text += (
+                    "Coerente con i cicli pluriennali dei tassi d'interesse "
+                    "(le banche centrali alzano o abbassano i tassi gradualmente)."
+                )
+        else:
+            text += "Un mix di correlazioni positive e negative a diversi lag."
+        return text
+
+    acf_takeaway_parts = []
+    for label in ["Azioni", "Bond"]:
+        if label in acf_info:
+            acf_takeaway_parts.append(_describe_acf(label, acf_info[label]))
+    SECTION_TEXT[6]["takeaway"] = "<br><br>".join(acf_takeaway_parts)
 
     # ── assembla HTML ──
     figures = [(1, fig1), (2, fig2), (3, fig3)]
