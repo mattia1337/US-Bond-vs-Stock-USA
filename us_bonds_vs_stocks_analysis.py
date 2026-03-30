@@ -1088,24 +1088,20 @@ def main():
 
     # aggiorna il takeaway della sezione 1 con i dati dei regimi
     total_years = sum(regime_counts.values())
-    gold_n = regime_counts.get("Goldilocks", 0)
-    gold_pct = gold_n / total_years * 100
-    stag_n = regime_counts.get("Stagflazione / Crisi", 0)
-    stag_pct = stag_n / total_years * 100
-    # trova il regime più comune e il più raro
-    most_common = max(regime_counts, key=regime_counts.get)
-    most_common_pct = regime_counts[most_common] / total_years * 100
-    least_common = min(regime_counts, key=regime_counts.get)
-    least_common_pct = regime_counts[least_common] / total_years * 100
+    # ordina regimi per frequenza decrescente
+    sorted_regimes = sorted(regime_counts.items(), key=lambda x: x[1], reverse=True)
+    regime_lines = []
+    for regime, count in sorted_regimes:
+        pct = count / total_years * 100
+        regime_lines.append(f"<b>{regime}</b>: {pct:.0f}% ({count} anni)")
     SECTION_TEXT[1]["takeaway"] = (
-        f"Il regime più comune è <b>{most_common}</b>, "
-        f"che si verifica nel <b>{most_common_pct:.0f}%</b> degli anni "
-        f"({regime_counts[most_common]} su {total_years}). "
-        f"Il regime più raro è <b>{least_common}</b> "
-        f"(<b>{least_common_pct:.0f}%</b>, {regime_counts[least_common]} anni): "
-        f"dove entrambe le asset class perdono valore simultaneamente. "
+        f"Distribuzione dei regimi su {total_years} anni: "
+        f"{', '.join(regime_lines)}.<br><br>"
         f"Il regime <b>Fuga verso la qualità</b> dimostra perché i titoli di Stato "
-        f"sono considerati un'assicurazione contro i crolli azionari."
+        f"sono considerati un'assicurazione contro i crolli azionari. "
+        f"Il regime <b>Stagflazione / Crisi</b> (entrambe le asset class in perdita) "
+        f"è lo scenario più temuto ma si verifica nel "
+        f"<b>{regime_counts.get('Stagflazione / Crisi', 0) / total_years * 100:.0f}%</b> dei casi."
     )
 
     print("  Analisi 2: Matrice di Transizione Markov ...")
