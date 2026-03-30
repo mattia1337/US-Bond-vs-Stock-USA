@@ -134,7 +134,7 @@ def fetch_shiller_extended() -> pd.DataFrame:
 #  ANALISI 1 — Market Regime Clustering (GMM)
 # ════════════════════════════════════════════════════════════════════════════
 
-def analysis_regime_clustering(df: pd.DataFrame) -> go.Figure:
+def analysis_regime_clustering(df: pd.DataFrame) -> tuple:
     X = df[["stocks", "bonds"]].values
 
     # BIC per scegliere n_components
@@ -255,7 +255,13 @@ def analysis_regime_clustering(df: pd.DataFrame) -> go.Figure:
                         font=dict(family=FONT_MONO, size=14, color=TEXT_COL)),
         autosize=True, height=650, margin=dict(t=90, b=60, l=60, r=30),
     )
-    return fig
+
+    regime_counts = {}
+    for i in range(n_clusters):
+        regime = name_map[i]
+        regime_counts[regime] = int((labels == i).sum())
+
+    return fig, regime_counts
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -270,7 +276,7 @@ def _assign_quadrant(row):
     return 3                          # Azioni+ Bond-
 
 
-def analysis_markov_transitions(df: pd.DataFrame) -> go.Figure:
+def analysis_markov_transitions(df: pd.DataFrame) -> tuple:
     df = df.sort_values("year").copy()
     df["quadrant"] = df.apply(_assign_quadrant, axis=1)
 
@@ -327,7 +333,14 @@ def analysis_markov_transitions(df: pd.DataFrame) -> go.Figure:
         plot_bgcolor=PLOT_BG, paper_bgcolor=PAPER_BG,
         autosize=True, height=600, margin=dict(t=90, b=80, l=120, r=30),
     )
-    return fig
+
+    trans_data = {
+        "probs": probs,
+        "counts": counts,
+        "quad_names": QUADRANT_NAMES,
+    }
+
+    return fig, trans_data
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -435,7 +448,7 @@ def analysis_rolling_correlation(df: pd.DataFrame) -> go.Figure:
 #  ANALISI 4 — CAPE come Predittore
 # ════════════════════════════════════════════════════════════════════════════
 
-def analysis_cape_predictor(df: pd.DataFrame, shiller_ext: pd.DataFrame) -> go.Figure:
+def analysis_cape_predictor(df: pd.DataFrame, shiller_ext: pd.DataFrame) -> tuple:
     # merge CAPE e CPI con rendimenti
     merged = df.merge(shiller_ext[["year", "cape", "inflation"]], on="year", how="inner")
     merged = merged.dropna(subset=["cape"]).sort_values("year").reset_index(drop=True)
@@ -575,7 +588,16 @@ def analysis_cape_predictor(df: pd.DataFrame, shiller_ext: pd.DataFrame) -> go.F
                         font=dict(family=FONT_MONO, size=14, color=TEXT_COL)),
         autosize=True, height=1100, margin=dict(t=140, b=120, l=60, r=30),
     )
-    return fig
+
+    cape_info = {
+        "n_indep": n_indep,
+        "cutoff_year": int(fwd["year"].max()),
+    }
+    if len(recent_years) > 0:
+        cape_info["recent_cape_min"] = float(recent_years["cape"].min())
+        cape_info["recent_cape_max"] = float(recent_years["cape"].max())
+
+    return fig, cape_info
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -833,14 +855,7 @@ SECTION_TEXT = {
             "Azioni e bond scendono entrambi. Lo scenario peggiore: "
             "l'inflazione alta erode sia azioni che obbligazioni. Esempio: 1974, 2022."
         ),
-        "takeaway": (
-            "Il regime più comune è <b>Goldilocks</b> (azioni e bond entrambi positivi), "
-            "che si verifica in circa il 40-50% degli anni. "
-            "Il regime più raro e pericoloso è <b>Stagflazione/Crisi</b>, "
-            "dove entrambe le asset class perdono valore simultaneamente. "
-            "Il regime <b>Fuga verso la qualità</b> dimostra perché i titoli di Stato "
-            "sono considerati un'assicurazione contro i crolli azionari."
-        ),
+        "takeaway": "",  # verrà aggiornato dinamicamente nel main con i dati dei regimi
     },
     2: {
         "intro": (
@@ -849,12 +864,7 @@ SECTION_TEXT = {
             "Ogni cella mostra la probabilità (e il numero di transizioni osservate) "
             "di passare dal quadrante della riga a quello della colonna."
         ),
-        "takeaway": (
-            "Le crisi (<b>Azioni- Bond-</b>) sono raramente seguite da un'altra crisi. "
-            "Nella maggior parte dei casi, l'anno successivo si torna in un quadrante positivo. "
-            "Il quadrante più \"appiccicoso\" è <b>Azioni+ Bond+</b>: "
-            "i periodi buoni tendono a perpetuarsi."
-        ),
+        "takeaway": "",  # verrà aggiornato dinamicamente nel main con i dati di Markov
     },
     3: {
         "intro": (
@@ -882,30 +892,8 @@ SECTION_TEXT = {
         ),
     },
     4: {
-        "intro": (
-            "Il <b>CAPE (Cyclically Adjusted P/E)</b> è un indicatore inventato "
-            "dal premio Nobel Robert Shiller. Misura quanto è \"costoso\" il mercato azionario "
-            "rispetto ai suoi utili medi degli ultimi 10 anni (aggiustati per l'inflazione).<br><br>"
-            "Un CAPE alto significa che stai pagando molto per ogni euro di utili → "
-            "storicamente, i rendimenti dei 10 anni successivi tendono ad essere bassi.<br>"
-            "Un CAPE basso significa che il mercato è \"a sconto\" → "
-            "storicamente, i rendimenti futuri tendono ad essere alti.<br><br>"
-            "<b>Perché mancano gli ultimi anni?</b> Questo grafico confronta il CAPE di ogni anno "
-            "con il rendimento <b>effettivo</b> dei 10 anni successivi. "
-            "Per esempio, per il 2020 dovremmo aspettare il 2030 per sapere quanto ha reso il mercato. "
-            "Siccome siamo nel 2026, per tutti gli anni dopo il ~2015 non abbiamo ancora 10 anni di dati. "
-            "I <span style='color:#f0883e'>&#9670; diamanti arancioni</span> mostrano questi anni recenti, "
-            "posizionati sulla linea di regressione (= dove la storia prevede che finiranno).<br><br>"
-            "Clicca sulle decadi nella legenda per isolare singoli periodi storici."
-        ),
-        "takeaway": (
-            "La relazione è chiara: quando il CAPE è basso (&lt;15), i rendimenti futuri tendono "
-            "ad essere elevati. Quando è alto (&gt;25), i rendimenti futuri sono compressi. "
-            "Gli anni recenti hanno CAPE molto alti (30-38), suggerendo rendimenti futuri modesti — "
-            "ma il verdetto definitivo arriverà solo fra 5-10 anni. "
-            "<b>Attenzione:</b> le finestre di 10 anni si sovrappongono, inflazionando l'R². "
-            "Il campione effettivo di osservazioni indipendenti è ~11, non 100+."
-        ),
+        "intro": "",  # verrà aggiornato dinamicamente nel main con i dati CAPE
+        "takeaway": "",  # verrà aggiornato dinamicamente nel main con i dati CAPE
     },
     5: {
         "intro": (
@@ -943,18 +931,19 @@ SECTION_TEXT = {
     },
 }
 
-CAVEATS_HTML = """
+def build_caveats_html(n_years, first_year):
+    return f"""
 <div style="max-width:900px;margin:40px auto;padding:30px;
             background:#161b22;border:1px solid #30363d;border-radius:8px;">
   <h2 style="color:#f0f6fc;font-family:Georgia,serif;margin-top:0;">
     Caveat e Note Metodologiche
   </h2>
   <ol style="color:#c9d1d9;font-size:16px;line-height:1.9;">
-    <li><b>Campione piccolo (N ≈ 116):</b> Con ~116 osservazioni annuali,
+    <li><b>Campione piccolo (N ≈ {n_years}):</b> Con ~{n_years} osservazioni annuali,
         tutti i risultati hanno intervalli di confidenza ampi. I pattern
         mostrati sono suggestivi, non leggi statistiche provate.</li>
-    <li><b>Non-stazionarietà:</b> L'economia USA del 1920 è fondamentalmente
-        diversa da quella del 2020. Gold standard, politica monetaria,
+    <li><b>Non-stazionarietà:</b> L'economia USA del {first_year} è fondamentalmente
+        diversa da quella del {TODAY.year}. Gold standard, politica monetaria,
         struttura dei mercati e globalizzazione sono cambiati radicalmente.</li>
     <li><b>Survivorship bias:</b> Il mercato USA ha avuto la migliore performance
         azionaria del XX secolo. Analisi simili per Giappone, Germania o Russia
@@ -979,7 +968,7 @@ CAVEATS_HTML = """
 """
 
 
-def build_html(figures: list[tuple[int, go.Figure]]) -> str:
+def build_html(figures: list[tuple[int, go.Figure]], caveats_html: str = "") -> str:
     plotly_divs = []
     for i, (section_num, fig) in enumerate(figures):
         # primo grafico include plotly.js, gli altri no
@@ -1057,7 +1046,7 @@ def build_html(figures: list[tuple[int, go.Figure]]) -> str:
 {"".join(plotly_divs)}
 
 <div id="caveats">
-{CAVEATS_HTML}
+{caveats_html}
 </div>
 
 <footer style="text-align:center;padding:30px 20px 50px;max-width:900px;margin:0 auto;">
@@ -1095,18 +1084,97 @@ def main():
 
     # ── analisi ──
     print("\n  Analisi 1: Regime Clustering (GMM) ...")
-    fig1 = analysis_regime_clustering(df)
+    fig1, regime_counts = analysis_regime_clustering(df)
+
+    # aggiorna il takeaway della sezione 1 con i dati dei regimi
+    total_years = sum(regime_counts.values())
+    gold_n = regime_counts.get("Goldilocks", 0)
+    gold_pct = gold_n / total_years * 100
+    stag_n = regime_counts.get("Stagflazione / Crisi", 0)
+    stag_pct = stag_n / total_years * 100
+    # trova il regime più comune e il più raro
+    most_common = max(regime_counts, key=regime_counts.get)
+    most_common_pct = regime_counts[most_common] / total_years * 100
+    least_common = min(regime_counts, key=regime_counts.get)
+    least_common_pct = regime_counts[least_common] / total_years * 100
+    SECTION_TEXT[1]["takeaway"] = (
+        f"Il regime più comune è <b>{most_common}</b>, "
+        f"che si verifica nel <b>{most_common_pct:.0f}%</b> degli anni "
+        f"({regime_counts[most_common]} su {total_years}). "
+        f"Il regime più raro è <b>{least_common}</b> "
+        f"(<b>{least_common_pct:.0f}%</b>, {regime_counts[least_common]} anni): "
+        f"dove entrambe le asset class perdono valore simultaneamente. "
+        f"Il regime <b>Fuga verso la qualità</b> dimostra perché i titoli di Stato "
+        f"sono considerati un'assicurazione contro i crolli azionari."
+    )
 
     print("  Analisi 2: Matrice di Transizione Markov ...")
-    fig2 = analysis_markov_transitions(df)
+    fig2, trans_data = analysis_markov_transitions(df)
+
+    # aggiorna il takeaway della sezione 2 con i dati di transizione
+    probs = trans_data["probs"]
+    quad_names = trans_data["quad_names"]
+    self_probs = {quad_names[i]: probs[i, i] for i in range(len(quad_names))}
+    stickiest = max(self_probs, key=self_probs.get)
+    stickiest_pct = self_probs[stickiest]
+    crisis_name = "Azioni- Bond-"
+    crisis_self = self_probs.get(crisis_name, 0)
+    SECTION_TEXT[2]["takeaway"] = (
+        f"Le crisi (<b>{crisis_name}</b>) hanno una probabilità di ripetersi "
+        f"di solo il <b>{crisis_self:.0f}%</b>: nella maggior parte dei casi, "
+        f"l'anno successivo si torna in un quadrante positivo. "
+        f"Il quadrante più \"appiccicoso\" è <b>{stickiest}</b> "
+        f"(probabilità di restare: <b>{stickiest_pct:.0f}%</b>): "
+        f"i periodi buoni tendono a perpetuarsi."
+    )
 
     print("  Analisi 3: Correlazione Rolling ...")
     fig3 = analysis_rolling_correlation(df)
 
     fig4 = None
+    cape_info = None
     if shiller_ext is not None:
         print("  Analisi 4: CAPE come Predittore ...")
-        fig4 = analysis_cape_predictor(df, shiller_ext)
+        fig4, cape_info = analysis_cape_predictor(df, shiller_ext)
+
+    # aggiorna intro e takeaway della sezione 4 con i dati CAPE
+    if cape_info:
+        cutoff = cape_info["cutoff_year"]
+        example_year = cutoff + 5
+        example_future = example_year + 10
+        n_indep = cape_info["n_indep"]
+        SECTION_TEXT[4]["intro"] = (
+            "Il <b>CAPE (Cyclically Adjusted P/E)</b> è un indicatore inventato "
+            "dal premio Nobel Robert Shiller. Misura quanto è \"costoso\" il mercato azionario "
+            "rispetto ai suoi utili medi degli ultimi 10 anni (aggiustati per l'inflazione).<br><br>"
+            "Un CAPE alto significa che stai pagando molto per ogni euro di utili → "
+            "storicamente, i rendimenti dei 10 anni successivi tendono ad essere bassi.<br>"
+            "Un CAPE basso significa che il mercato è \"a sconto\" → "
+            "storicamente, i rendimenti futuri tendono ad essere alti.<br><br>"
+            "<b>Perché mancano gli ultimi anni?</b> Questo grafico confronta il CAPE di ogni anno "
+            "con il rendimento <b>effettivo</b> dei 10 anni successivi. "
+            f"Per esempio, per il {example_year} dovremmo aspettare il {example_future} "
+            f"per sapere quanto ha reso il mercato. "
+            f"Siccome siamo nel {TODAY.year}, per tutti gli anni dopo il {cutoff} "
+            f"non abbiamo ancora 10 anni di dati. "
+            "I <span style='color:#f0883e'>&#9670; diamanti arancioni</span> mostrano questi anni recenti, "
+            "posizionati sulla linea di regressione (= dove la storia prevede che finiranno).<br><br>"
+            "Clicca sulle decadi nella legenda per isolare singoli periodi storici."
+        )
+        cape_min = cape_info.get("recent_cape_min")
+        cape_max = cape_info.get("recent_cape_max")
+        cape_range_str = (
+            f"{cape_min:.0f}-{cape_max:.0f}" if cape_min is not None else "elevati"
+        )
+        SECTION_TEXT[4]["takeaway"] = (
+            "La relazione è chiara: quando il CAPE è basso (&lt;15), i rendimenti futuri tendono "
+            "ad essere elevati. Quando è alto (&gt;25), i rendimenti futuri sono compressi. "
+            f"Gli anni recenti hanno CAPE molto alti (<b>{cape_range_str}</b>), "
+            f"suggerendo rendimenti futuri modesti — "
+            f"ma il verdetto definitivo arriverà solo fra 5-10 anni. "
+            f"<b>Attenzione:</b> le finestre di 10 anni si sovrappongono, inflazionando l'R². "
+            f"Il campione effettivo di osservazioni indipendenti è ~{n_indep}, non {total_years}+."
+        )
 
     print("  Analisi 5: Mean Reversion ...")
     fig5, prediction = analysis_mean_reversion(df)
@@ -1191,7 +1259,8 @@ def main():
         figures.append((4, fig4))
     figures += [(5, fig5), (6, fig6)]
 
-    html = build_html(figures)
+    caveats = build_caveats_html(len(df), int(df.year.min()))
+    html = build_html(figures, caveats_html=caveats)
     out = "analysis.html"
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
